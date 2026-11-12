@@ -1,6 +1,7 @@
 import os
 import random
 import datetime
+import subprocess
 import requests
 import librosa
 from PIL import Image
@@ -16,6 +17,27 @@ TOPICS = [
     {"query": "cricket stadium match action shot", "caption": "Pure cricket adrenaline. 🏏🔥 #cricket #cricketlovers #reels"},
     {"query": "football stadium night match players", "caption": "Under the stadium lights. ⚽✨ #football #soccer #footballreels"}
 ]
+
+MUSIC_QUERIES = [
+    "phonk no copyright beat instrumental",
+    "brazilian phonk no copyright music",
+    "epic sports hype beat no copyright",
+    "drift phonk no copyright instrumental"
+]
+
+def fetch_auto_audio(output_audio="bg_track.mp3"):
+    query = random.choice(MUSIC_QUERIES)
+    pick = random.randint(1, 5)
+    cmd = [
+        "yt-dlp",
+        f"ytsearch5:{query}",
+        "--playlist-items", str(pick),
+        "-x", "--audio-format", "mp3",
+        "--match-filter", "duration >= 20 & duration <= 240",
+        "-o", output_audio
+    ]
+    subprocess.run(cmd, check=True)
+    return output_audio
 
 def download_images(query, count=6):
     os.makedirs("imgs", exist_ok=True)
@@ -102,7 +124,6 @@ def update_rss_feed(caption):
 if __name__ == "__main__":
     choice = random.choice(TOPICS)
     images = download_images(choice["query"], count=6)
-    audio_files = [f"audio/{f}" for f in os.listdir("audio") if f.endswith(".mp3")]
-    chosen_audio = random.choice(audio_files)
+    chosen_audio = fetch_auto_audio("bg_track.mp3")
     build_beat_synced_video(images, chosen_audio, "latest_reel.mp4")
     update_rss_feed(choice["caption"])
