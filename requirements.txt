@@ -1,0 +1,6 @@
+duckduckgo-search
+requests
+Pillow
+numpy
+librosa
+moviepy==1.0.3
