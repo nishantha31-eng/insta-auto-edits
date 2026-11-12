@@ -40,7 +40,7 @@ def generate_fallback_beat(output_audio="bg_track.wav", duration=15, bpm=132):
     return output_audio
 
 def fetch_auto_audio(output_audio="bg_track.mp3"):
-    # 1. Primary: Fetch real trending Phonk tracks from SoundCloud via yt-dlp (unblocked on GitHub)
+    # 1. Primary: Fetch real trending Phonk tracks from SoundCloud via yt-dlp
     try:
         query = random.choice(PHONK_QUERIES)
         pick = random.randint(1, 8)
@@ -59,7 +59,7 @@ def fetch_auto_audio(output_audio="bg_track.mp3"):
     except Exception as e:
         print("SoundCloud fetch skipped:", e)
 
-    # 2. Backup: Audius free decentralized music API (trending electronic/phonk/trap)
+    # 2. Backup: Audius free decentralized music API
     try:
         res = requests.get(
             "https://audius.co",
@@ -116,7 +116,6 @@ def download_images(query, count=9):
     return paths
 
 def build_beat_synced_video(image_paths, audio_path, output_path="latest_reel.mp4"):
-    # Start 15 seconds into the track so we hit the bass drop instead of a slow intro!
     total_dur = AudioFileClip(audio_path).duration
     start_offset = 15.0 if total_dur > 35.0 else 0.0
 
@@ -160,13 +159,13 @@ def update_rss_feed(caption):
     now = datetime.datetime.now(datetime.timezone.utc)
     pub_date = now.strftime("%a, %d %b %Y %H:%M:%S +0000")
     unique_id = now.strftime("%Y%m%d%H%M%S")
-    video_url = f"https://githubusercontent.com{GITHUB_USER}/{REPO_NAME}/main/latest_reel.mp4?v={unique_id}"
+    video_url = f"https://{GITHUB_USER}.github.io/{REPO_NAME}/latest_reel.mp4?v={unique_id}"
 
     rss_content = f"""<?xml version="1.0" encoding="UTF-8" ?>
 <rss version="2.0">
 <channel>
   <title>Auto Sports and Car Edits</title>
-  <link>https://github.com{GITHUB_USER}/{REPO_NAME}</link>
+  <link>https://{GITHUB_USER}.github.io/{REPO_NAME}/</link>
   <description>Automated daily edits</description>
   <item>
     <title>{caption}</title>
