@@ -1,6 +1,6 @@
 icrawler
 requests
-Pillow
+Pillow==9.5.0
 numpy
 librosa
 moviepy==1.0.3
