@@ -1,0 +1,29 @@
+name: Generate Daily Reel
+
+on:
+  schedule:
+    - cron: '30 12 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-edit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run AI Video Editor
+        run: python main.py
+      - name: Save Video and RSS Feed to Repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@://github.com"
+          git add latest_reel.mp4 feed.xml
+          git commit -m "New auto edit" || exit 0
+          git push
