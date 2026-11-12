@@ -3,8 +3,10 @@ import glob
 import random
 import datetime
 import requests
+import numpy as np
 import librosa
 from PIL import Image
+from scipy.io.wavfile import write as wav_write
 from icrawler.builtin import BingImageCrawler
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
 
@@ -17,40 +19,44 @@ TOPICS = [
     {"query": "football stadium night match players", "caption": "Under the stadium lights. ⚽✨ #football #soccer #footballreels"}
 ]
 
-def fetch_auto_audio(output_audio="bg_track.mp3"):
-    # Searches Internet Archive for unblocked free phonk / electronic / sports beats
-    search_url = "https://archive.org"
-    params = {
-        "q": "mediatype:audio AND (phonk OR bass OR synthwave OR beat) AND format:MP3",
-        "fl[]": ["identifier"],
-        "rows": 30,
-        "page": random.randint(1, 3),
-        "output": "json"
-    }
-    res = requests.get(search_url, params=params, timeout=15).json()
-    docs = res.get("response", {}).get("docs", [])
-    random.shuffle(docs)
+def generate_fallback_beat(output_audio="bg_track.wav", duration=16, bpm=130):
+    sr = 44100
+    t = np.linspace(0, duration, int(sr * duration), endpoint=False)
+    beat_interval = 60.0 / bpm
+    beat_pos = (t % beat_interval) / beat_interval
+    # Punchy sub-bass kick + hi-hat rhythm
+    kick = np.sin(2 * np.pi * (55 + 90 * np.exp(-beat_pos * 18)) * t) * np.exp(-beat_pos * 8)
+    hat = np.random.uniform(-0.15, 0.15, len(t)) * np.exp(-((t % (beat_interval / 2)) / (beat_interval / 2)) * 25)
+    audio = np.clip(kick * 0.8 + hat, -1.0, 1.0)
+    wav_write(output_audio, sr, (audio * 32767).astype(np.int16))
+    return output_audio
 
-    for doc in docs:
-        ident = doc["identifier"]
-        meta = requests.get(f"https://archive.org{ident}", timeout=15).json()
-        for f in meta.get("files", []):
-            name = f.get("name", "")
-            size = int(f.get("size", 0))
-            if name.lower().endswith(".mp3") and 500_000 < size < 12_000_000:
-                dl_url = f"https://archive.org{ident}/{name}"
-                audio_data = requests.get(dl_url, timeout=25)
-                if audio_data.status_code == 200:
-                    with open(output_audio, "wb") as out:
-                        out.write(audio_data.content)
-                    return output_audio
-    raise RuntimeError("Could not download an audio track.")
+def fetch_auto_audio(output_audio="bg_track.mp3"):
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"}
+    # Try Jamendo public royalty-free API (electronic / hiphop / phonk-style instrumentals)
+    try:
+        tag = random.choice(["electronic", "hiphop", "trap", "rock"])
+        url = f"https://jamendo.com{tag}&vocalinstrumental=instrumental&audiodlformat=mp32"
+        res = requests.get(url, headers=headers, timeout=15).json()
+        tracks = [t for t in res.get("results", []) if t.get("audiodownload")]
+        if tracks:
+            chosen = random.choice(tracks)
+            dl = requests.get(chosen["audiodownload"], headers=headers, timeout=25)
+            if dl.status_code == 200 and len(dl.content) > 100_000:
+                with open(output_audio, "wb") as f:
+                    f.write(dl.content)
+                return output_audio
+    except Exception as e:
+        print("Jamendo fetch skipped:", e)
+
+    # Guaranteed fallback beat if external audio servers are busy
+    return generate_fallback_beat("bg_track.wav")
 
 def download_images(query, count=6):
     os.makedirs("raw_imgs", exist_ok=True)
     os.makedirs("imgs", exist_ok=True)
     crawler = BingImageCrawler(storage={"root_dir": "raw_imgs"})
-    crawler.crawl(keyword=query, max_num=18)
+    crawler.crawl(keyword=query, max_num=20)
 
     paths = []
     for raw_path in glob.glob("raw_imgs/*"):
@@ -58,7 +64,7 @@ def download_images(query, count=6):
             break
         try:
             img = Image.open(raw_path).convert("RGB")
-            if img.width >= 600 and img.height >= 600:
+            if img.width >= 500 and img.height >= 500:
                 target_ratio = 1080 / 1920
                 img_ratio = img.width / img.height
                 if img_ratio > target_ratio:
