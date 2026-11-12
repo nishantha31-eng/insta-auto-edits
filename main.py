@@ -6,7 +6,7 @@ import subprocess
 import requests
 import numpy as np
 import librosa
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageFilter
 from scipy.io.wavfile import write as wav_write
 from icrawler.builtin import BingImageCrawler
 from moviepy.editor import ImageClip, AudioFileClip, ColorClip, CompositeVideoClip, concatenate_videoclips
@@ -14,11 +14,12 @@ from moviepy.editor import ImageClip, AudioFileClip, ColorClip, CompositeVideoCl
 GITHUB_USER = "nishantha31-eng"
 REPO_NAME = "insta-auto-edits"
 
+# Queries tuned for clean, text-free photography
 TOPICS = [
-    {"query": "JDM drift sports car night neon aesthetic", "caption": "Late night JDM vibes. 🏎️💨 #cars #jdm #carsofinstagram #reels"},
-    {"query": "international cricket match stadium batting bowling", "caption": "Pure cricket adrenaline. 🏏🔥 #cricket #cricketlovers #reels"},
-    {"query": "UEFA Champions League soccer match goal celebration", "caption": "Under the stadium lights. ⚽✨ #football #soccer #championsleague #reels"},
-    {"query": "Lionel Messi Cristiano Ronaldo soccer match wallpaper", "caption": "Pure football greatness. ⚽🐐 #football #soccer #messi #ronaldo"}
+    {"query": "JDM sports car night photography clean wallpaper", "caption": "Late night JDM vibes. 🏎️💨 #cars #jdm #carsofinstagram #reels"},
+    {"query": "cricket stadium match photography action shot", "caption": "Pure cricket adrenaline. 🏏🔥 #cricket #cricketlovers #reels"},
+    {"query": "UEFA Champions League soccer match photography", "caption": "Under the stadium lights. ⚽✨ #football #soccer #championsleague #reels"},
+    {"query": "Lionel Messi Cristiano Ronaldo match photography", "caption": "Pure football greatness. ⚽🐐 #football #soccer #messi #ronaldo"}
 ]
 
 PHONK_QUERIES = [
@@ -27,6 +28,28 @@ PHONK_QUERIES = [
     "aggressive phonk edit",
     "trending phonk tik tok"
 ]
+
+def has_text_or_watermark(img):
+    # Checks high-contrast sharp edges in top/bottom/center bands where watermarks & captions sit
+    gray = img.convert("L").resize((270, 480))
+    edges = np.array(gray.filter(ImageFilter.FIND_EDGES), dtype=np.float32)
+    top_band = edges[:90, :].mean()
+    bottom_band = edges[-90:, :].mean()
+    center_band = edges[180:300, :].mean()
+    # Reject images with heavy text/banners at top, bottom, or across the middle
+    if top_band > 38 or bottom_band > 38 or center_band > 45:
+        return True
+    return False
+
+def add_cinematic_vignette(img):
+    w, h = img.size
+    x = np.linspace(-1, 1, w)
+    y = np.linspace(-1, 1, h)
+    X, Y = np.meshgrid(x, y)
+    radius = np.sqrt(X**2 + Y**2)
+    mask = np.clip(1.0 - 0.35 * (radius**1.8), 0.55, 1.0)
+    arr = np.array(img, dtype=np.float32) * mask[:, :, np.newaxis]
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
 
 def generate_fallback_beat(output_audio="bg_track.wav", duration=15, bpm=132):
     sr = 44100
@@ -40,7 +63,6 @@ def generate_fallback_beat(output_audio="bg_track.wav", duration=15, bpm=132):
     return output_audio
 
 def fetch_auto_audio(output_audio="bg_track.mp3"):
-    # 1. Primary: Fetch real trending Phonk tracks from SoundCloud via yt-dlp
     try:
         query = random.choice(PHONK_QUERIES)
         pick = random.randint(1, 8)
@@ -54,12 +76,10 @@ def fetch_auto_audio(output_audio="bg_track.mp3"):
         ]
         subprocess.run(cmd, check=True, timeout=45)
         if os.path.exists(output_audio) and os.path.getsize(output_audio) > 100_000:
-            print("Loaded SoundCloud phonk track!")
             return output_audio
     except Exception as e:
         print("SoundCloud fetch skipped:", e)
 
-    # 2. Backup: Audius free decentralized music API
     try:
         res = requests.get(
             "https://audius.co",
@@ -69,13 +89,11 @@ def fetch_auto_audio(output_audio="bg_track.mp3"):
         tracks = res.get("data", [])
         if tracks:
             chosen = random.choice(tracks[:10])
-            track_id = chosen["id"]
-            stream_url = f"https://audius.co{track_id}/stream?app_name=AutoReelsBot"
+            stream_url = f"https://audius.co{chosen['id']}/stream?app_name=AutoReelsBot"
             dl = requests.get(stream_url, timeout=25)
             if dl.status_code == 200 and len(dl.content) > 100_000:
                 with open(output_audio, "wb") as f:
                     f.write(dl.content)
-                print("Loaded Audius phonk track!")
                 return output_audio
     except Exception as e:
         print("Audius fetch skipped:", e)
@@ -86,7 +104,9 @@ def download_images(query, count=9):
     os.makedirs("raw_imgs", exist_ok=True)
     os.makedirs("imgs", exist_ok=True)
     crawler = BingImageCrawler(storage={"root_dir": "raw_imgs"})
-    crawler.crawl(keyword=query, max_num=25)
+    # Negative keywords block watermarked stock agencies & poster/meme text
+    clean_query = f"{query} -watermark -shutterstock -gettyimages -alamy -istock -quote -poster"
+    crawler.crawl(keyword=clean_query, max_num=35)
 
     paths = []
     for raw_path in glob.glob("raw_imgs/*"):
@@ -94,7 +114,9 @@ def download_images(query, count=9):
             break
         try:
             img = Image.open(raw_path).convert("RGB")
-            if img.width >= 500 and img.height >= 500:
+            if img.width >= 600 and img.height >= 600:
+                if has_text_or_watermark(img):
+                    continue
                 target_ratio = 1080 / 1920
                 img_ratio = img.width / img.height
                 if img_ratio > target_ratio:
@@ -106,8 +128,9 @@ def download_images(query, count=9):
                     top = (img.height - new_h) // 2
                     img = img.crop((0, top, img.width, top + new_h))
                 img = img.resize((1080, 1920), Image.Resampling.LANCZOS)
-                img = ImageEnhance.Contrast(img).enhance(1.12)
-                img = ImageEnhance.Color(img).enhance(1.15)
+                img = ImageEnhance.Contrast(img).enhance(1.15)
+                img = ImageEnhance.Color(img).enhance(1.18)
+                img = add_cinematic_vignette(img)
                 out_path = f"imgs/img_{len(paths)}.jpg"
                 img.save(out_path, quality=95)
                 paths.append(out_path)
@@ -132,20 +155,21 @@ def build_beat_synced_video(image_paths, audio_path, output_path="latest_reel.mp
     clips = []
     for idx, img_path in enumerate(image_paths[:len(cuts)-1]):
         duration = max(0.55, cuts[idx+1] - cuts[idx])
+        # CapCut-style exponential punch-in / punch-out + impact camera shake on first 0.2s
         if idx % 2 == 0:
             base_clip = (ImageClip(img_path)
                          .set_duration(duration)
-                         .resize(lambda t, d=duration: 1.0 + 0.12 * (t / d))
-                         .set_position("center"))
+                         .resize(lambda t, d=duration: 1.04 + 0.14 * ((t / d) ** 0.6))
+                         .set_position(lambda t: ("center", int(18 * np.sin(t * 45) * np.exp(-t * 14)))))
         else:
             base_clip = (ImageClip(img_path)
                          .set_duration(duration)
-                         .resize(lambda t, d=duration: 1.12 - 0.12 * (t / d))
-                         .set_position("center"))
+                         .resize(lambda t, d=duration: 1.18 - 0.14 * ((t / d) ** 0.6))
+                         .set_position(lambda t: (int(18 * np.cos(t * 45) * np.exp(-t * 14)), "center")))
 
         flash = (ColorClip(size=(1080, 1920), color=(255, 255, 255))
-                 .set_duration(min(0.08, duration * 0.3))
-                 .set_opacity(0.45))
+                 .set_duration(min(0.09, duration * 0.3))
+                 .set_opacity(0.55))
         comp = CompositeVideoClip([base_clip, flash], size=(1080, 1920)).set_duration(duration)
         clips.append(comp)
 
