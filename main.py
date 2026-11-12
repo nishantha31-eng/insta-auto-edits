@@ -1,72 +1,80 @@
 import os
+import glob
 import random
 import datetime
-import subprocess
 import requests
 import librosa
 from PIL import Image
-from io import BytesIO
-from duckduckgo_search import DDGS
+from icrawler.builtin import BingImageCrawler
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
 
 GITHUB_USER = "nishantha31-eng"
 REPO_NAME = "insta-auto-edits"
 
 TOPICS = [
-    {"query": "JDM sports car night aesthetic wallpaper", "caption": "Late night JDM vibes. 🏎️💨 #cars #jdm #carsofinstagram #reels"},
-    {"query": "cricket stadium match action shot", "caption": "Pure cricket adrenaline. 🏏🔥 #cricket #cricketlovers #reels"},
+    {"query": "JDM sports car night aesthetic", "caption": "Late night JDM vibes. 🏎️💨 #cars #jdm #carsofinstagram #reels"},
+    {"query": "cricket stadium match action", "caption": "Pure cricket adrenaline. 🏏🔥 #cricket #cricketlovers #reels"},
     {"query": "football stadium night match players", "caption": "Under the stadium lights. ⚽✨ #football #soccer #footballreels"}
 ]
 
-MUSIC_QUERIES = [
-    "phonk no copyright beat instrumental",
-    "brazilian phonk no copyright music",
-    "epic sports hype beat no copyright",
-    "drift phonk no copyright instrumental"
-]
-
 def fetch_auto_audio(output_audio="bg_track.mp3"):
-    query = random.choice(MUSIC_QUERIES)
-    pick = random.randint(1, 5)
-    cmd = [
-        "yt-dlp",
-        f"ytsearch5:{query}",
-        "--playlist-items", str(pick),
-        "-x", "--audio-format", "mp3",
-        "--match-filter", "duration >= 20 & duration <= 240",
-        "-o", output_audio
-    ]
-    subprocess.run(cmd, check=True)
-    return output_audio
+    # Searches Internet Archive for unblocked free phonk / electronic / sports beats
+    search_url = "https://archive.org"
+    params = {
+        "q": "mediatype:audio AND (phonk OR bass OR synthwave OR beat) AND format:MP3",
+        "fl[]": ["identifier"],
+        "rows": 30,
+        "page": random.randint(1, 3),
+        "output": "json"
+    }
+    res = requests.get(search_url, params=params, timeout=15).json()
+    docs = res.get("response", {}).get("docs", [])
+    random.shuffle(docs)
+
+    for doc in docs:
+        ident = doc["identifier"]
+        meta = requests.get(f"https://archive.org{ident}", timeout=15).json()
+        for f in meta.get("files", []):
+            name = f.get("name", "")
+            size = int(f.get("size", 0))
+            if name.lower().endswith(".mp3") and 500_000 < size < 12_000_000:
+                dl_url = f"https://archive.org{ident}/{name}"
+                audio_data = requests.get(dl_url, timeout=25)
+                if audio_data.status_code == 200:
+                    with open(output_audio, "wb") as out:
+                        out.write(audio_data.content)
+                    return output_audio
+    raise RuntimeError("Could not download an audio track.")
 
 def download_images(query, count=6):
+    os.makedirs("raw_imgs", exist_ok=True)
     os.makedirs("imgs", exist_ok=True)
+    crawler = BingImageCrawler(storage={"root_dir": "raw_imgs"})
+    crawler.crawl(keyword=query, max_num=18)
+
     paths = []
-    with DDGS() as ddgs:
-        results = ddgs.images(query, max_results=30)
-        for r in results:
-            if len(paths) >= count:
-                break
-            try:
-                resp = requests.get(r["image"], timeout=8)
-                img = Image.open(BytesIO(resp.content)).convert("RGB")
-                if img.width >= 720 and img.height >= 720:
-                    target_ratio = 1080 / 1920
-                    img_ratio = img.width / img.height
-                    if img_ratio > target_ratio:
-                        new_w = int(img.height * target_ratio)
-                        left = (img.width - new_w) // 2
-                        img = img.crop((left, 0, left + new_w, img.height))
-                    else:
-                        new_h = int(img.width / target_ratio)
-                        top = (img.height - new_h) // 2
-                        img = img.crop((0, top, img.width, top + new_h))
-                    img = img.resize((1080, 1920), Image.Resampling.LANCZOS)
-                    path = f"imgs/img_{len(paths)}.jpg"
-                    img.save(path, quality=95)
-                    paths.append(path)
-            except Exception:
-                continue
+    for raw_path in glob.glob("raw_imgs/*"):
+        if len(paths) >= count:
+            break
+        try:
+            img = Image.open(raw_path).convert("RGB")
+            if img.width >= 600 and img.height >= 600:
+                target_ratio = 1080 / 1920
+                img_ratio = img.width / img.height
+                if img_ratio > target_ratio:
+                    new_w = int(img.height * target_ratio)
+                    left = (img.width - new_w) // 2
+                    img = img.crop((left, 0, left + new_w, img.height))
+                else:
+                    new_h = int(img.width / target_ratio)
+                    top = (img.height - new_h) // 2
+                    img = img.crop((0, top, img.width, top + new_h))
+                img = img.resize((1080, 1920), Image.Resampling.LANCZOS)
+                out_path = f"imgs/img_{len(paths)}.jpg"
+                img.save(out_path, quality=95)
+                paths.append(out_path)
+        except Exception:
+            continue
     return paths
 
 def build_beat_synced_video(image_paths, audio_path, output_path="latest_reel.mp4"):
